@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>WebRTC Video Call</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background: #111;
+            color: white;
+        }
+        video {
+            width: 45%;
+            margin: 5px;
+            border: 2px solid #00ffcc;
+            background: black;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            margin: 10px;
+            cursor: pointer;
+        }
+        #log {
+            background: #000;
+            color: #0f0;
+            height: 120px;
+            overflow-y: auto;
+            padding: 5px;
+            font-size: 12px;
+            text-align: left;
+        }
+    </style>
+</head>
+
+<body>
+
+<h2>WebRTC Web Video Call</h2>
+
+<video id="localVideo" autoplay playsinline muted></video>
+<video id="remoteVideo" autoplay playsinline></video>
+
+<br>
+
+<button id="startBtn">Start Call</button>
+
+<h3>Logs</h3>
+<div id="log"></div>
+
+<script>
+function log(msg) {
+    document.getElementById("log").innerHTML += msg + "<br>";
+}
+
+log("Page loaded");
+
+const ws = new WebSocket("ws://" + location.host + "/ws");
+
+ws.onopen = () => log("WebSocket connected");
+ws.onerror = e => log("WebSocket error");
+
+const pc = new RTCPeerConnection({
+    iceServers: [
+        { urls: "stun:stun.l.google.com:19302" }
+    ]
+});
+
+pc.onicecandidate = e => {
+    if (e.candidate) {
+        ws.send(JSON.stringify({ ice: e.candidate }));
+    }
+};
+
+pc.ontrack = e => {
+    log("Remote track received");
+    document.getElementById("remoteVideo").srcObject = e.streams[0];
+};
+
+ws.onmessage = async msg => {
+    const data = JSON.parse(msg.data);
+
+    if (data.sdp) {
+        log("SDP received: " + data.sdp.type);
+        await pc.setRemoteDescription(data.sdp);
+
+        if (data.sdp.type === "offer") {
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            ws.send(JSON.stringify({ sdp: pc.localDescription }));
+            log("Answer sent");
+        }
+    }
+
+    if (data.ice) {
+        await pc.addIceCandidate(data.ice);
+    }
+};
+
+async function startCall() {
+    log("Start Call clicked");
+
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: true
+        });
+
+        log("Camera & mic permission granted");
+
+        document.getElementById("localVideo").srcObject = stream;
+        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        ws.send(JSON.stringify({ sdp: pc.localDescription }));
+        log("Offer sent");
+
+    } catch (err) {
+        log("ERROR: " + err);
+        alert("Camera permission failed");
+    }
+}
+
+document.getElementById("startBtn").addEventListener("click", startCall);
+</script>
+
+</body>
+</html>
